@@ -1,6 +1,6 @@
 # Stroke EDA, statistics and machine learning prediction 
 
-In this repo you can see a full analysis of stroke prediction using Rmarkdown in Rstudio and Flexdashboard to make a dashboard. 
+In this repository you can see a full analysis of stroke prediction using Rmarkdown in Rstudio and Flexdashboard to make a dashboard. 
 
 There are 2 main codes, one for the full analysis and the other for the dashboard. 
 
