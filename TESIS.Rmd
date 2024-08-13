@@ -1,0 +1,1013 @@
+---
+title: "TFM_SOUZA_STROKE"
+author: "Santiago Souza"
+date: "`r format(Sys.time(), '%d/%m/%y')`"
+output: word_document
+  word_document: 
+    reference_docx: codigo_tfm_stroke.docx
+    toc: true
+  html_document:
+    toc: true
+    highlight: tango
+    theme: united
+---
+```{r setup, echo = FALSE}
+knitr::opts_chunk$set(echo = TRUE, warning = FALSE, messEdad = FALSE, comment = NA)
+```
+
+```{r}
+library(caret) # models, createDataPartition
+library(ConfusionTableR)
+library(DataExplorer)
+library(dplyr)
+library(ggplot2)
+library(plotly)
+library(kableExtra)
+library(ModelMetrics)
+library(probably) # for balancing performance
+library(pROC) # AUC
+library(psych)
+library(purrr) # map
+library(randomForest)
+library(skimr) # descriptive stats
+library(tidymodels)
+library(tidyverse) # %>%
+library(univariateML)
+library(vip) # for variable importance
+library(xgboost)
+library(gridExtra)
+library(ROCR)
+library(randomForest)
+library(rpart)
+library(rpart.plot)
+library(e1071)
+library(ranger)
+library(DMwR2)
+library(ROSE)
+library(MASS)
+library(gains)
+library(corrplot)
+library(openxlsx)
+library(knitr)
+library(nortest)
+library(naniar)
+library(vcd) # assocstats, coef de Cramer
+library(WRS2)
+```
+
+# 1) Pre procesamiento de datos
+
+```{r}
+data = readr::read_csv("stroke.csv")
+```
+
+```{r}
+# Nombramos a data como df1
+df1 <- data
+
+#Traducimos las variables
+df1 = df1 %>% 
+  rename(
+    Genero = gender,
+    Estuvo_casado = ever_married,
+    Trabajo = work_type,
+    Residencia = Residence_type,
+    Estado_fumador = smoking_status,
+    Hipertension = hypertension,
+    Enfermedad_cardiaca = heart_disease,
+    Edad = age,
+    Nivel_prom_glucosa = avg_glucose_level,
+    IMC = bmi,
+    ACV = stroke
+  ) 
+
+#Reemplazamos los 0 y 1 para mejorar la legibilidad del dataset
+df1 = df1 %>%
+  mutate(
+    Genero = factor(Genero, levels = c("Female", "Male","Other"), 
+                    labels = c("Femenino", "Masculino", "Otro")),
+    Estuvo_casado = factor(Estuvo_casado, levels = c("No", "Yes"), 
+                           labels = c("No", "Si")),
+    Trabajo = factor(Trabajo, levels = c("children", "Govt_job", "Never_worked", "Private", "Self-employed"), 
+                     labels = c("Niño", "Gobierno", "Nunca trabajo", "Privado", "Autónomo")),
+    Residencia = factor(Residencia, levels = c("Rural", "Urban"), 
+                        labels = c("Rural", "Urbana")),
+    Estado_fumador = factor(Estado_fumador, levels = c("formerly smoked", "never smoked", "smokes", "Unknown"), 
+                            labels = c("Ex fumador", "Nunca fumo", "Fuma", "Desconocido")),
+    Hipertension = factor(Hipertension, levels = c(1,0), 
+                          labels = c("Si", "No")),
+    Enfermedad_cardiaca = factor(Enfermedad_cardiaca, levels = c(1,0), 
+                                 labels = c("Si", "No")),
+    ACV = factor(ACV, levels = c(1,0), 
+                 labels = c("Positivo", "Negativo"))
+  )
+
+```
+
+```{r}
+df_visualizacion <- df1
+
+# IMC como integer (N/A -> NA, num sin decimales)
+df_visualizacion$IMC <- as.integer(df_visualizacion$IMC)
+
+# Calcular la mediana del IMC excluyendo los NA
+med <- median(df_visualizacion$IMC, na.rm = TRUE)
+
+# Imputar el valor de la mediana a los valores NA en la columna IMC
+df_visualizacion$IMC[is.na(df_visualizacion$IMC)] <- med
+
+# Función para obtener valores descriptivos
+obtener_descripcion <- function(columna) {
+  if (is.factor(columna) || is.character(columna)) {
+    # Valores únicos para factores o caracteres
+    return(paste(unique(columna), collapse = "/"))
+  } else if (is.numeric(columna)) {
+    # Rango para variables numéricas
+    min_val <- min(columna, na.rm = TRUE)
+    max_val <- max(columna, na.rm = TRUE)
+    return(paste0(min_val, "/", max_val))
+  }
+}
+
+# Aplicar la función a cada columna del dataset
+descripcion <- sapply(df_visualizacion, obtener_descripcion)
+
+# Convertir a data frame para presentación
+descripcion_df <- data.frame(
+  Variable = names(descripcion),
+  Valores = descripcion,
+  stringsAsFactors = FALSE
+)
+
+# Mostrar los resultados
+descripcion_df %>% 
+  kable(align = "c") %>%
+  row_spec(0, bold = T) %>% 
+  kable_classic(full_width = F,html_font = "Times New Roman", position = "center")
+```
+
+```{r}
+head(df1) %>% 
+  kable(align = "c") %>% 
+  row_spec(0, bold = T) %>% 
+  kable_classic(full_width = F,html_font = "Times New Roman")
+```
+
+```{r}
+# Nos sacamos de arriba el ID del dataset.
+df1 <- subset(df1, select = (-id))
+
+# IMC como integer (N/A -> NA, num sin decimales)
+df1$IMC <- as.integer(df1$IMC)
+
+# Variables categoricas a factores 
+categoricas = c("Genero", "Hipertension", "Enfermedad_cardiaca", "Estuvo_casado", "Trabajo", "Residencia", "Estado_fumador", "ACV")
+
+for (col in categoricas) {
+  df1[[col]] = as.factor(df1[[col]])
+}
+```
+
+```{r}
+data$bmi <- as.integer(data$bmi)
+vis_miss(data)
+```
+
+# 2) Análisis gráfico
+
+## 2.1) Proporción de ACV en el dataset
+
+```{r}
+# Calcular porcentajes manualmente
+count_ACV <- table(df1$ACV)
+porcentaje_ACV <- as.data.frame(count_ACV)
+names(porcentaje_ACV) <- c("ACV", "n")
+porcentaje_ACV$porcentaje <- porcentaje_ACV$n / sum(porcentaje_ACV$n) * 100
+
+# Añadir etiquetas con porcentaje y número de casos
+porcentaje_ACV$etiqueta <- sprintf("ACV %s: %.1f%% (%d)", porcentaje_ACV$ACV, porcentaje_ACV$porcentaje, porcentaje_ACV$n)
+
+# Obtener los primeros 2 colores de la paleta de ggplot2
+ggplot_colors <- hue_pal()(2) 
+
+# Asignar colores a los valores de ACV
+colors <- setNames(ggplot_colors, as.character(unique(porcentaje_ACV$ACV)))
+
+# Crear el gráfico de torta directamente con plotly, especificando los colores
+plot_ly(porcentaje_ACV, labels = ~etiqueta, values = ~porcentaje, type = 'pie',
+               marker = list(colors = colors)) 
+```
+
+## 2.2) Variables categoricas
+
+### 2.2.1) Diagnostico positivos Vs negativos
+
+```{r}
+# Variables categoricas
+cat_vars = c("Genero", "Hipertension", "Enfermedad_cardiaca", "Estuvo_casado", "Trabajo", "Residencia", "Estado_fumador")
+
+# Lista vacia para almacenar los graficos de variables categoricas
+cat_plots <- list()
+  
+# Graficos de las variables categoricas
+for (var in cat_vars) {
+  p <- ggplot(df1, aes_string(x = var, fill = "factor(ACV)")) +
+    geom_bar(alpha = 0.5, position = "dodge") +
+    labs(x = var, y = "Conteo", fill = "Diagnóstico") +
+    theme_minimal() +
+    theme(axis.text.x = element_text(angle = 45, hjust = 1))
+    
+  cat_plots[[var]] <- p # Guarda los graficos en la lista cat_plots
+  #print(p) # Imprime separado los graficos
+}
+
+do.call("grid.arrange", c(cat_plots, ncol = 3))
+```
+
+### 2.2.2) Diagnositico proporción de positivos
+
+```{r}
+# Filtrar datos para los que tuvieron ACV
+ACV_positive <- df1 %>% filter(ACV == "Positivo")
+
+cat_plots_positive = list()
+
+# Bucle para crear gráficos
+for (var in cat_vars) {
+  data_proportion <- ACV_positive %>%
+    group_by_at(vars(var)) %>%
+    summarise(prop = n() / nrow(ACV_positive))
+  
+  p <- ggplot(data_proportion, aes_string(x = var, y = "prop", fill = var)) +
+    geom_col(alpha = 0.5) +
+    labs(x = var,
+         y = "Proporción") +
+    theme_minimal() +
+    theme(axis.text.x = element_text(angle = 45, hjust = 1))
+  
+  cat_plots_positive[[var]] <- p # Guarda los graficos en la lista cat_plots
+  #print(p) # Muestra los graficos separados
+}
+
+do.call("grid.arrange", c(cat_plots_positive, ncol = 3))
+```
+
+## 2.3) Variables numericas
+
+### 2.3.1) Diagnostico positivos Vs negativos
+
+```{r}
+# Variables numericas 
+nums_vars <- c("Edad","Nivel_prom_glucosa","IMC")
+
+# -----------------------------------------------------------------------------------
+nums_plots <- list()
+
+# Graficos de las variables numericas 
+for (var in nums_vars) {
+  p <- ggplot(df1, aes_string(x = var, fill = "factor(ACV)")) +
+    geom_histogram(alpha = 0.5, bins = 30, position = "identity") +
+    labs(x = var, y = "Conteo", fill = "Diagnóstico") +
+    theme_minimal()
+  
+  nums_plots[[var]] <- p # Guarda los graficos en la lista nums_plots
+  #print(p) # Imprime separado los graficos
+}
+# -----------------------------------------------------------------------------------
+nums_plots_density <- list()
+
+# Graficos de las variables numericas 
+for (var in nums_vars) {
+  p <- ggplot(df1, aes_string(x = var, fill = "factor(ACV)")) +
+    geom_density(alpha = 0.5) +
+    labs(x = var, y = "Frecuencia", fill = "Diagnóstico") +
+    theme_minimal()
+  
+  nums_plots_density[[var]] <- p # Guarda los graficos en la lista nums_plots
+  #print(p) # Imprime separado los graficos
+}
+# -----------------------------------------------------------------------------------
+nums_boxplots <- list()
+
+# Bucle para crear gráficos boxplots
+for (var in nums_vars) {
+  p <- ggplot(df1, aes_string(x = var, fill = "factor(ACV)")) +
+    geom_boxplot(alpha = 0.5, position = position_dodge(width = 0.8)) +
+    labs(x = var, fill = "Diagnóstico") +
+    theme_minimal()
+  
+  nums_boxplots[[var]] <- p # Guarda los graficos en la lista nums_plots
+  #print(p) 
+}
+# -----------------------------------------------------------------------------------
+# Combinar lista de graficos nume
+num_plots <- c(nums_plots, nums_plots_density, nums_boxplots)
+
+# Mostrar todos los graficos juntos 
+do.call("grid.arrange", c(num_plots, ncol = 3))
+```
+
+### 2.3.2) Distribución numérica de los atributos entre ellos y ACV
+
+```{r}
+point_plots = list()
+
+# Edad x IMC
+pab <- ggplot(df1, aes(x = Edad, y = IMC, color = ACV)) +
+  geom_point(alpha = 0.5)+
+  theme_minimal() +
+  labs(x = "Edad",
+       y = "IMC",
+       color = "ACV")
+point_plots$pab <- pab
+pab
+
+# Nivel_prom_glucosa x Edad
+paa <- ggplot(df1, aes(x = Nivel_prom_glucosa, y = Edad, color = ACV)) +
+  geom_point(alpha = 0.5)+
+  theme_minimal() +
+  labs(x = "Nivel de glucosa",
+       y = "Edad",
+       color = "ACV")
+point_plots$paa <- paa
+paa
+
+# IMC x Nivel_prom_glucosa
+pba <- ggplot(df1, aes(x = IMC, y = Nivel_prom_glucosa, color = ACV)) +
+  geom_point(alpha = 0.5)+
+  theme_minimal() +
+  labs(x = "IMC",
+       y = "Nivel de glucosa",
+       color = "ACV")
+point_plots$pba <- pba
+pba
+
+do.call("grid.arrange", c(point_plots, ncol = 3)) 
+```
+
+### 2.3.3) Boxplots edad vs distintos factores
+
+```{r}
+# Lista vacia para almacenar los graficos de variables categoricas vs Edad
+cat_Edad_boxplots <- list()
+  
+for (var in cat_vars) {
+  p <- df1 %>%
+    ggplot(aes_string(x = var, y = "Edad", fill = "factor(ACV)")) + 
+    geom_boxplot(alpha = 0.5) +
+    labs(x = var,
+         y = "Edad",
+         fill = "ACV") +
+    theme_minimal()+
+    theme(axis.text.x = element_text(angle = 45, hjust = 1))
+  
+  #print(p)
+  cat_Edad_boxplots[[var]] <- p
+}
+
+# Mostrar todos los gráficos juntos
+do.call(grid.arrange, c(cat_Edad_boxplots, ncol = 3))
+```
+
+### 2.3.4) Boxplots NPG vs distintos factores
+
+```{r}
+# Lista vacia para almacenar los graficos de variables categoricas vs Edad
+cat_agl_boxplots <- list()
+  
+for (var in cat_vars) {
+  p <- df1 %>%
+    ggplot(aes_string(x = var, y = "Nivel_prom_glucosa", fill = "factor(ACV)")) + 
+    geom_boxplot(alpha = 0.5) +
+    labs(x = var,
+         y = "NGP",
+         fill = "ACV") +
+    theme_minimal()+
+    theme(axis.text.x = element_text(angle = 45, hjust = 1))
+  
+  #print(p)
+  cat_agl_boxplots[[var]] <- p
+}
+
+# Mostrar todos los gráficos juntos
+do.call(grid.arrange, c(cat_agl_boxplots, ncol = 3))
+```
+
+### 2.3.4) Boxplots IMC vs distintos factores
+
+```{r}
+# Lista vacia para almacenar los graficos de variables categoricas vs Edad
+cat_IMC_boxplots <- list()
+  
+for (var in cat_vars) {
+  p <- df1 %>%
+    ggplot(aes_string(x = var, y = "IMC", fill = "factor(ACV)")) + 
+    geom_boxplot(alpha = 0.5) +
+    labs(x = var,
+         y = "IMC",
+         fill = "ACV") +
+    theme_minimal()+
+    theme(axis.text.x = element_text(angle = 45, hjust = 1))
+  
+  #print(p)
+  cat_IMC_boxplots[[var]] <- p
+}
+
+# Mostrar todos los gráficos juntos
+do.call(grid.arrange, c(cat_IMC_boxplots, ncol = 3))
+```
+
+# 3) Tests estadístico y tabla
+
+## 3.1) Variables categóricas
+
+### 3.1.1) Estadísticos
+
+```{r}
+# Función para formatear p-values
+format_p_value <- function(p) {
+  if (p < .001) {
+    return("&lt;.001")
+  } else if (p < .01) {
+    return(sprintf("%.3f", p))
+  } else {
+    return(sprintf("%.2f", p))
+  }
+}
+
+# Crear un data frame vacío para los resultados
+cat_results <- data.frame(
+  Variable = character(),
+  Grupo = character(),
+  Frecuencia = character(),
+  p_value = character(),  # Cambiado a character para almacenar los p-values formateados
+  Cramer_V = numeric(),
+  stringsAsFactors = FALSE
+)
+
+# Bucle para calcular los estadísticos descriptivos y realizar los tests
+for (var in cat_vars) {
+  # Tabla de frecuencias
+  freq_table <- table(df1[[var]], df1$ACV)
+  
+  # Prueba chi-cuadrado
+  chi_test <- chisq.test(freq_table)
+  cramer_v <- assocstats(freq_table)$cramer
+  
+  # Preparar las frecuencias de los grupos
+  for (level in rownames(freq_table)) {
+    freq_str <- paste(colnames(freq_table), freq_table[level, ], sep = ": ", collapse = " / ")
+    cat_results <- rbind(cat_results, data.frame(
+      Variable = var,
+      Grupo = level,
+      Frecuencia = freq_str,
+      p_value = format_p_value(chi_test$p.value),  
+      Cramer_V = format_p_value(cramer_v)  
+    ))
+  }
+}
+
+# Añadir marca de referencia a la columna p_value
+colnames(cat_results)[4] <- paste0("p_value", footnote_marker_alphabet(1))
+colnames(cat_results)[5] <- paste0("V_Cramer", footnote_marker_alphabet(2))
+
+# Crear la tabla con kable y añadir una nota de pie de página referenciando la columna p_value
+cat_results %>%
+  kable("html", escape = F, align = "c") %>%
+  row_spec(0, bold = T) %>% 
+  kable_classic(full_width = F, html_font = "Times New Roman") %>%
+  footnote(alphabet = c("Los p-values se obtienen de hacer el test de Chi-cuadrado.",
+                        "Asociacion pequeña:< 0.1, mediana: 0.1 - 0.3, grande > 0.3."))
+
+```
+
+### 3.1.2) Matriz de correlación
+
+```{r}
+df_corrplot = df1[,c(1,3:7,10:11)]
+
+empty_m = matrix(ncol = length(df_corrplot),
+                 nrow= length(df_corrplot),
+                 dimnames = list(names(df_corrplot),
+                                 names(df_corrplot)))
+
+#Calculamos el estadístico y vamos rellenando la matriz 
+calculate_cramer = function(m, df_corrplot) {
+  for (r in seq(nrow(m))){
+    for (c in seq(ncol(m))){
+     m[[r, c]] = assocstats(table(df_corrplot[[r]], df_corrplot[[c]]))$cramer 
+    }
+  }
+return(m)
+}
+
+cor_matrix = calculate_cramer(empty_m, df_corrplot)
+
+corrplot(cor_matrix, method = "color", is.corr = F, type = "upper",
+         diag = F, cl.lim = c(0,1), tl.col = "black", tl.srt = 45,
+         tl.cex = 0.7,number.cex = 0.6,addCoef.col = "black")
+```
+
+## 3.2) Variables numéricas
+
+### 3.2.1) Estadísticos
+
+```{r}
+# Función para formatear p-values
+format_p_value <- function(p) {
+  if (p < .001) {
+    return("&lt;.001")
+  } else if (p < .01) {
+    return(sprintf("%.3f", p))
+  } else {
+    return(sprintf("%.2f", p))
+  }
+}
+
+# Crear una matriz para almacenar los p-valores del test robusto
+m_rob <- matrix(nrow = 3, 
+                ncol = 1,
+                dimnames = list(colnames(df1[, c(2, 8:9)]),
+                                c("p_valor")))
+
+set.seed(1)
+
+# Realizar el test robusto pb2gen para cada variable
+for (i in c(2, 8:9)) {
+  f <- formula(paste(colnames(df1)[i], "~ ACV"))
+  test <- pb2gen(f, data = df1)
+  m_rob[colnames(df1)[i], ] <- c(test$p.value)
+}
+
+# Convertir la matriz en un data frame para facilitar el manejo
+robust_results <- as.data.frame(m_rob)
+robust_results$Variable <- rownames(robust_results)
+robust_results <- robust_results %>%
+  rename(p_value_robust = p_valor) %>%
+  dplyr::select(Variable, p_value_robust)
+
+# Crear un data frame vacío para los resultados
+num_results <- data.frame(
+  Variable = character(),
+  ACV = character(),
+  Mean = character(),  # Mean incluirá los intervalos de confianza
+  Median = numeric(),
+  SD = numeric(),
+  IQR = numeric(),
+  p_value = character(),  # p-valor del test principal
+  p_value_robust = character(),  # p-valor del test robusto
+  stringsAsFactors = FALSE
+)
+
+# Función para calcular el intervalo de confianza por bootstrap
+bootstrap_ci <- function(data, var, n_boot = 1000, alpha = 0.05) {
+  boot_means <- numeric(n_boot)
+  for (i in 1:n_boot) {
+    sample_data <- data[sample(1:nrow(data), replace = TRUE), ]
+    boot_means[i] <- mean(sample_data[[var]], na.rm = TRUE)
+  }
+  ci_lower <- quantile(boot_means, alpha / 2)
+  ci_upper <- quantile(boot_means, 1 - alpha / 2)
+  return(c(ci_lower, ci_upper))
+}
+
+# Calcular la estadística descriptiva, pruebas y bootstrap
+for (var in nums_vars) {
+  
+  # Estadísticos descriptivos
+  desc_stats <- df1 %>%
+    group_by(ACV) %>%
+    summarise(
+      mean = mean(get(var), na.rm = TRUE),
+      median = median(get(var), na.rm = TRUE),
+      sd = sd(get(var), na.rm = TRUE),
+      IQR = IQR(get(var), na.rm = TRUE)
+    )
+  
+  # Calcular intervalos de confianza por bootstrap para cada nivel de ACV
+  ci_results <- df1 %>%
+    group_by(ACV) %>%
+    summarise(
+      CI = list(bootstrap_ci(cur_data(), var))
+    )
+  
+  # Test estadístico
+  ks_test <- lillie.test(df1[[var]]) # Prueba para verificar normalidad
+  
+  if (ks_test$p.value < 0.05) {      # Si no es normal, usar test no paramétrico
+    # Test no paramétrico
+    test_result <- wilcox.test(df1[[var]] ~ df1$ACV)
+    
+    # Obtener p-valor del test robusto
+    robust_test_result <- robust_results %>%
+      filter(Variable == var)
+    robust_p_value <- robust_test_result$p_value_robust
+    
+  } else {
+    levene_test <- leveneTest(df1[[var]] ~ df1$ACV)
+    if (levene_test$`Pr(>F)`[1] < 0.05) {
+      # Test robusto
+      test_result <- yuen(df1[[var]] ~ df1$ACV)
+      robust_p_value <- test_result$p.value
+    } else {
+      # Test paramétrico
+      test_result <- t.test(df1[[var]] ~ df1$ACV)
+      
+      # Obtener p-valor del test robusto
+      robust_p_value <- robust_results %>%
+        filter(Variable == var) %>%
+        pull(p_value_robust)
+      robust_test_name <- NA
+    }
+  }
+  
+  # Almacenar resultados
+  for (level in unique(df1$ACV)) {
+    stats <- desc_stats[desc_stats$ACV == level,]
+    ci <- ci_results[ci_results$ACV == level,]$CI[[1]]
+    mean_with_ci <- paste0(round(stats$mean, 2), " (", round(ci[1], 2), ", ", round(ci[2], 2), ")")
+    num_results <- rbind(num_results, data.frame(
+      Variable = var,
+      ACV = level,
+      Media = mean_with_ci,            # Incluir IC en la columna Mean
+      Mediana = round(stats$median, 2),    # Redondear Median a 2 decimales
+      SD = round(stats$sd, 2),            # Redondear SD a 2 decimales
+      IQR = round(stats$IQR, 2),          # Redondear IQR a 2 decimales
+      p_value = format_p_value(test_result$p.value),  # p-valor del test
+      p_value_robust = format_p_value(robust_p_value) # p-valor del test robusto
+    ))
+  }
+}
+
+# Añadir marca de referencia a la columna p_value
+colnames(num_results)[3] <- paste0("Media (IC)", footnote_marker_alphabet(1))
+colnames(num_results)[7] <- paste0("p_value", footnote_marker_alphabet(2))
+colnames(num_results)[8] <- paste0("p_value_r", footnote_marker_alphabet(3))
+
+# Mostrar los resultados sin la primera columna
+num_results %>% 
+  kable("html", escape = FALSE, align = "c") %>%
+  row_spec(0, bold = TRUE) %>% 
+  kable_classic(full_width = FALSE, html_font = "Times New Roman") %>%
+  footnote(
+    alphabet = c(
+      "Los intervalos de confianza del 95% se calculan con el método Bootstrap.",
+      "Los p-values se obtienen de hacer el test de Wilcoxon (No parametrica).",
+      "Los p-values se obtienen de hacer el test pb2gen (Robusta)."),
+    escape = FALSE)
+
+```
+
+# 4) Modelos predictivos
+
+## 4.1) Preparación de los datos para los modelos predictivos
+
+```{r}
+# Nos sacamos el other del genero
+df1 <- df1 %>% filter(Genero != "Otro") %>% droplevels()
+ 
+# Calcular la mediana del IMC excluyendo los NA
+med <- median(df1$IMC, na.rm = TRUE)
+
+# Imputar el valor de la mediana a los valores NA en la columna IMC
+df1$IMC[is.na(df1$IMC)] <- med
+```
+
+## 4.2) Modelos predictivos
+
+```{r}
+# OJO: Este código demora como 1 hora en correr, depende la PC.
+# Medir el tiempo de ejecución
+start_time <- Sys.time()
+
+# Data frame para almacenar los resultados
+df_results = NULL
+
+# Ciclo de 10 iteraciones cada vez con una semilla diferente 
+for (i in 1:10) {
+  set.seed(i)
+  
+  # Dividir el conjunto de datos en entrenamiento (80%) y prueba (20%)
+  train_row_numbers = createDataPartition(df1$ACV, p = 0.8, list = FALSE)
+  d_train = df1[train_row_numbers, ]
+  d_test = df1[-train_row_numbers, ]
+  
+  # Aplicar SMOTE al conjunto de entrenamiento
+  d_train <- ovun.sample(ACV ~ ., data = d_train, 
+                         method = "over", N = 6000)$data
+  
+  # Transformación de datos: codificación de variables categóricas, centrado 
+  # y escala de variables numéricas
+  transformer = recipe(ACV ~ ., data = d_train) %>%
+    step_dummy(all_nominal_predictors()) %>%
+    step_center(where(is.numeric)) %>%
+    step_scale(where(is.numeric))
+  
+  data_train = transformer %>% prep(d_train) %>% bake(new_data = NULL)
+  
+  data_test = transformer %>% prep(d_test) %>% bake(new_data = d_test)
+  
+  # Control de entrenamiento
+  ctrl = trainControl(
+    method = "cv", # validación cruzada cv
+    number = 10,
+    returnResamp = "final",
+    verboseIter = F,
+    summaryFunction = twoClassSummary, # Calcular métricas resumidas
+    classProbs = T,
+    savePredictions = T,
+    allowParallel = T)
+  
+  # Modelo 1: Random Forest --------------------------------------------------
+  tuneGrid_rf = expand.grid(mtry = 1:10) # numero de variables en cada division
+  set.seed(i)
+  rf_fit = train(ACV ~ ., data = data_train, method = "rf", metric = "ROC", 
+                 trControl = ctrl, tuneGrid = tuneGrid_rf)
+  
+  probs = seq(0.1, 0.9, by = 0.1)
+  set.seed(i)
+  ths_rf_fit = thresholder(rf_fit, threshold = probs, 
+                           final = TRUE, statistics = "all")
+  
+  ths_rf_fit %>% mutate(prob = probs) %>% filter(J == max(J)) %>%
+    pull(prob) -> thresh_prob_rf_fit
+  
+  ths_rf_fit %>% mutate(prob = probs) %>% filter(J == max(J)) %>%
+    pull(J) -> max_J_train
+  
+  preds_rf = as.factor(
+    ifelse(predict(rf_fit, data_test, type = "prob")
+           [, "Positivo"] >= thresh_prob_rf_fit, "Positivo", "Negativo"))
+  real = factor(data_test$ACV)
+  cm_rf = ConfusionTableR::binary_class_cm(
+    preds_rf, real, mode = 'everything', positive = 'Positivo')
+  
+  sensitivity_rf = cm_rf$confusion_matrix$byClass[1]
+  specificity_rf = cm_rf$confusion_matrix$byClass[2]
+  df_rf = data.frame(preds = preds_rf, real = real)
+  df_rf$preds = as.numeric(ifelse(df_rf$preds == "Positivo", 1, 0))
+  df_rf$real = as.numeric(ifelse(df_rf$real == "Positivo", 1, 0))
+  prediction_rf = prediction(df_rf$preds, df_rf$real)
+  AUC_rf = as.numeric(performance(prediction_rf, "auc")@y.values)
+  
+  row_rf = data.frame(
+    model = "Random forest", 
+    seed = i, 
+    probab = thresh_prob_rf_fit, 
+    max_J_train = max_J_train, 
+    sensitivity = sensitivity_rf, 
+    specificity = specificity_rf, 
+    AUC = AUC_rf)
+  
+  df_results = rbind(df_results, row_rf)
+  
+  # Modelo 2: Logistic Regression ---------------------------------------------
+  set.seed(i)
+  lr_fit = train(ACV ~ ., data = data_train, method = "glm", 
+                 family = "binomial", metric = "ROC", trControl = ctrl)
+  
+  preds_lr = predict(lr_fit, data_test)
+  cm_lr = ConfusionTableR::binary_class_cm(
+    preds_lr, real, mode = 'everything', positive = 'Positivo')
+  
+  sensitivity_lr = cm_lr$confusion_matrix$byClass[1]
+  specificity_lr = cm_lr$confusion_matrix$byClass[2]
+  df_lr = data.frame(preds = preds_lr, real = real)
+  df_lr$preds = as.numeric(ifelse(df_lr$preds == "Positivo", 1, 0))
+  df_lr$real = as.numeric(ifelse(df_lr$real == "Positivo", 1, 0))
+  prediction_lr = prediction(df_lr$preds, df_lr$real)
+  AUC_lr = as.numeric(performance(prediction_lr, "auc")@y.values)
+  
+  row_lr = data.frame(
+    model = "Logistic Regression", 
+    seed = i, 
+    probab = NA, # 
+    max_J_train = NA, 
+    sensitivity = sensitivity_lr, 
+    specificity = specificity_lr, 
+    AUC = AUC_lr)
+  
+  df_results = rbind(df_results, row_lr)
+  
+  # Modelo 3: Gradient Boosting -----------------------------------------------
+  tuneGrid_gbm = expand.grid(
+    nrounds = 100, 
+    max_depth = 6, 
+    eta = 0.3, 
+    gamma = 0, 
+    colsample_bytree = 1, 
+    min_child_weight = 1, 
+    subsample = 1)
+  
+  set.seed(i)
+  gbm_fit = train(ACV ~ ., data = data_train, method = "xgbTree",
+                  metric = "ROC", trControl = ctrl, tuneGrid = tuneGrid_gbm)
+  
+  preds_gbm = predict(gbm_fit, data_test)
+  cm_gbm = ConfusionTableR::binary_class_cm(
+    preds_gbm, real, mode = 'everything', positive = 'Positivo')
+  
+  sensitivity_gbm = cm_gbm$confusion_matrix$byClass[1]
+  specificity_gbm = cm_gbm$confusion_matrix$byClass[2]
+  df_gbm = data.frame(preds = preds_gbm, real = real)
+  df_gbm$preds = as.numeric(ifelse(df_gbm$preds == "Positivo", 1, 0))
+  df_gbm$real = as.numeric(ifelse(df_gbm$real == "Positivo", 1, 0))
+  prediction_gbm = prediction(df_gbm$preds, df_gbm$real)
+  AUC_gbm = as.numeric(performance(prediction_gbm, "auc")@y.values)
+  
+  row_gbm = data.frame(
+    model = "Gradient Boosting", 
+    seed = i, 
+    probab = NA, 
+    max_J_train = NA, 
+    sensitivity = sensitivity_gbm, 
+    specificity = specificity_gbm, 
+    AUC = AUC_gbm)
+  
+  df_results = rbind(df_results, row_gbm)
+}
+
+end_time <- Sys.time()
+execution_time <- end_time - start_time
+
+print(paste("Tiempo de ejecución: ", execution_time))
+```
+
+```{r}
+# Exportar resultados a un archivo Excel
+write.xlsx(list(Random_Forest = df_results_rf,
+                Logistic_Regression = df_results_lr,
+                Gradient_Boosting = df_results_gbm,
+                Comparative_Results = comparative_results),
+           "model_comparison.xlsx")
+```
+
+
+## 4.3) Matrices de confusión
+
+```{r}
+# Función para crear las etiquetas y graficar la matriz de confusión
+graficar_matriz <- function(conf_matrix, title) {
+  true_labels <- c(rep("Positivo", conf_matrix[1, "Freq"] + conf_matrix[2, "Freq"]),
+                   rep("Negativo", conf_matrix[3, "Freq"] + conf_matrix[4, "Freq"]))
+  
+  pred_labels <- c(rep("Positivo", conf_matrix[1, "Freq"]), 
+                   rep("Negativo", conf_matrix[2, "Freq"]), 
+                   rep("Positivo", conf_matrix[3, "Freq"]), 
+                   rep("Negativo", conf_matrix[4, "Freq"]))
+  
+  # Convertir las etiquetas a factores con los mismos niveles
+  true_labels <- factor(true_labels, levels = c("Positivo", "Negativo"))
+  pred_labels <- factor(pred_labels, levels = c("Positivo", "Negativo"))
+  
+  # Crear un data frame similar a 'predicted'
+  predicted <- data.frame(Class = true_labels, class_preds = pred_labels)
+  
+  # Graficar la matriz de confusión
+  ConfusionTableR::binary_visualiseR(
+    train_labels = predicted$class_preds,
+    truth_labels = predicted$Class,
+    class_label1 = "Positivo", 
+    class_label2 = "Negativo",
+    quadrant_col1 = "#28ACB4", 
+    quadrant_col2 = "#4397D2",
+    custom_title = title, 
+    text_col = "black"
+  )
+}
+
+# Graficar para cada una de las matrices de confusión
+graficar_matriz(cm_rf$cm_tbl, "Random Forest")
+graficar_matriz(cm_lr$cm_tbl, "Logistic Regression")
+graficar_matriz(cm_gbm$cm_tbl, "Gradient Boosting")
+
+```
+
+## 4.4) Métricas
+
+```{r}
+# Crear tablas separadas para cada modelo excluyendo probab y max_J_train
+df_results_rf <- df_results %>% 
+  filter(model == "Random forest") #%>% 
+  #dplyr::select(model, seed, sensitivity, specificity, AUC)
+
+df_results_lr <- df_results %>% 
+  filter(model == "Logistic Regression") %>% 
+  dplyr::select(model, seed, sensitivity, specificity, AUC)
+
+df_results_gbm <- df_results %>% 
+  filter(model == "Gradient Boosting") %>% 
+  dplyr::select(model, seed, sensitivity, specificity, AUC)
+
+# Imprimir tablas separadas
+df_results_rf %>%
+  kable("html", escape = F, align = "c") %>%
+  row_spec(0, bold = T) %>% 
+  kable_classic(full_width = F, html_font = "Times New Roman")
+
+df_results_lr %>%
+  kable("html", escape = F, align = "c") %>%
+  row_spec(0, bold = T) %>% 
+  kable_classic(full_width = F, html_font = "Times New Roman")
+
+df_results_gbm %>%
+  kable("html", escape = F, align = "c") %>%
+  row_spec(0, bold = T) %>% 
+  kable_classic(full_width = F, html_font = "Times New Roman")
+
+# Crear una tabla comparativa
+comparative_results <- df_results %>%
+  group_by(model) %>%
+  summarise(
+    Escpecificidad = round(mean(specificity, na.rm = TRUE), 2),
+    Sensibilidad = round(mean(sensitivity, na.rm = TRUE), 2),
+    AUC = round(mean(AUC, na.rm = TRUE), 2)
+    #Precision = round(mean(precision, na.rm = TRUE), 2),
+    #F1 = round(mean(F1, na.rm = TRUE), 2)
+  ) %>%
+  pivot_longer(cols = -model, names_to = "metric", values_to = "value") %>%
+  pivot_wider(names_from = model, values_from = value) %>%
+  arrange(metric)
+
+# Imprimir tabla comparativa
+comparative_results %>%
+  kable("html", escape = F, align = "c") %>%
+  row_spec(0, bold = T) %>% 
+  kable_classic(full_width = F, html_font = "Times New Roman")
+```
+
+```{r}
+# Convertir los datos a formato largo (tidy)
+comparative_results_long <- comparative_results %>%
+  pivot_longer(cols = -metric, names_to = "Modelo", values_to = "Valor")
+
+# Paleta de colores Viridis
+colores_viridis <- viridis_pal(option = "E")(3)
+
+# Graficar usando ggplot2 con colores Viridis
+ggplot(comparative_results_long, aes(x = metric, y = Valor, fill = Modelo)) +
+  geom_bar(stat = "identity", position = "dodge") +
+  scale_fill_manual(values = colores_viridis) +
+  labs(y = "Valor",
+       x = "Métrica") +
+  theme_minimal() +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))
+```
+
+## 4.5) Factores significantes
+
+```{r}
+# Importancia de variables para Random Forest
+importance_rf = varImp(rf_fit, scale = FALSE)
+print(importance_rf)
+
+# Convertir en DataFrame
+importance_rf_df = as.data.frame(importance_rf$importance)
+print(importance_rf_df)
+importance_rf_df$Variable = rownames(importance_rf_df)
+
+ggplot(importance_rf_df, aes(x = reorder(Variable, Overall), y = Overall, fill = Overall)) +
+  geom_bar(stat = "identity") +
+  coord_flip() +
+  labs(title = "Importancia de Variables - Random Forest", x = "Variables", y = "Importancia") +
+  theme_minimal()+
+  scale_fill_viridis(discrete = F)
+```
+
+```{r}
+# Coeficientes del modelo de regresión logística
+coef_lr = summary(lr_fit$finalModel)$coefficients
+#print(coef_lr)
+coef_lr_df = as.data.frame(coef_lr)
+coef_lr_df$Variable = rownames(coef_lr_df)
+
+# Graficar
+ggplot(coef_lr_df, aes(x = reorder(Variable, Estimate), y = Estimate, fill = Estimate)) +
+  geom_bar(stat = "identity") +
+  coord_flip() +
+  labs(title = "Coeficientes - Logistic Regression", x = "Variables", y = "Coeficiente") +
+  theme_minimal()+
+  scale_fill_viridis(discrete = F)
+```
+
+```{r}
+# Importancia de variables para Gradient Boosting
+importance_gbm = xgb.importance(model = gbm_fit$finalModel)
+#print(importance_gbm)
+importance_gbm_df = as.data.frame(importance_gbm)
+
+# Graficar
+ggplot(importance_gbm_df, aes(x = reorder(Feature, Gain), y = Gain, fill = Gain)) +
+  geom_bar(stat = "identity") +
+  coord_flip() +
+  labs(title = "Importancia de Variables - Gradient Boosting", x = "Variables", y = "Ganancia") +
+  theme_minimal() +
+  scale_fill_viridis(discrete = F)
+```
+
+```{r}
+write.xlsx(list(imp_rf = importance_rf_df,
+                imp_lr = coef_lr_df,
+                imp_gbm = importance_gbm_df),
+           "model_imp.xlsx")
+```
