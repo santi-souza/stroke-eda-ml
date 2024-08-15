@@ -6,10 +6,10 @@ This repository contains a comprehensive analysis of stroke prediction using the
 
 ## Contents
 
-- `analysis.Rmd`  
+- `TESIS.Rmd`  
   RMarkdown file for the full analysis, including exploratory data analysis, statistical tests, and model evaluations.
 
-- `dashboard.Rmd`  
+- `DashboardTFM.Rmd`  
   RMarkdown file for the Flexdashboard, providing an interactive interface to explore the data and results.
 
 - `stroke.csv`  
