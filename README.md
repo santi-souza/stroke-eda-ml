@@ -1,13 +1,34 @@
-# Stroke EDA, statistics and machine learning prediction 
+# Stroke Prediction Analysis
 
-In this repository you can see a full analysis of stroke prediction using Rmarkdown in Rstudio and Flexdashboard to make a dashboard. 
+## Overview
 
-There are 2 main codes, one for the full analysis and the other for the dashboard. 
+This repository contains a comprehensive analysis of stroke prediction using the [Stroke Prediction Dataset](https://www.kaggle.com/datasets/fedesoriano/stroke-prediction-dataset). The analysis includes exploratory data analysis (EDA), statistical testing, and machine learning predictions. The work is implemented in R, with RMarkdown for documentation and Flexdashboard for interactive visualization.
 
-For the graphical analysis we make plots for the numerical and categorical variables. Also we make statistics tests for all the variables. 
+## Contents
 
-We use Random Forest, Logistic Regression and Gradient Boosting to the prediction. 
+- `analysis.Rmd`  
+  RMarkdown file for the full analysis, including exploratory data analysis, statistical tests, and model evaluations.
 
-You can see the dashboard in the next link (if you have any problem let me know): https://santisouza.shinyapps.io/DashboardTFM/ 
+- `dashboard.Rmd`  
+  RMarkdown file for the Flexdashboard, providing an interactive interface to explore the data and results.
 
-The dataset is in the repo, but if you want more info you can go to the next link: https://www.kaggle.com/datasets/fedesoriano/stroke-prediction-dataset
+- `stroke.csv`  
+  Dataset used for analysis. You can also download it from [Kaggle](https://www.kaggle.com/datasets/fedesoriano/stroke-prediction-dataset) if needed.
+
+## Features
+
+- **Exploratory Data Analysis (EDA):**  
+  Visualizations and statistical summaries of numerical and categorical variables in the dataset.
+
+- **Statistical Testing:**  
+  Analysis of relationships between variables using appropriate statistical tests.
+
+- **Machine Learning Models:**  
+  Implementation and evaluation of:
+  - **Random Forest**  
+  - **Logistic Regression**  
+  - **Gradient Boosting**  
+
+- **Interactive Dashboard:**  
+  An interactive dashboard to visualize the analysis results. View it [here](https://santisouza.shinyapps.io/DashboardTFM/).
+
