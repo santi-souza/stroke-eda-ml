@@ -4,6 +4,8 @@
 
 This repository contains a comprehensive analysis of stroke prediction using the [Stroke Prediction Dataset](https://www.kaggle.com/datasets/fedesoriano/stroke-prediction-dataset). The analysis includes exploratory data analysis (EDA), statistical testing, and machine learning predictions. The work is implemented in R, with RMarkdown for documentation and Flexdashboard for interactive visualization.
 
+![dash3](https://github.com/user-attachments/assets/261abf9a-ae03-4d9e-a39b-599b58a312a5)
+
 ## Contents
 
 - `TESIS.Rmd`  
