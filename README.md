@@ -38,7 +38,7 @@ A simple visualization on how it looks:
   RMarkdown file that generates the Flexdashboard, providing an interactive interface for data exploration.
 
 - `stroke.csv`  
-  Dataset used for analysis. You can also download it from [Kaggle](https://www.kaggle.com/datasets/fedesoriano/stroke-prediction-dataset) if needed.
+  You can download it from [Kaggle](https://www.kaggle.com/datasets/fedesoriano/stroke-prediction-dataset) if needed.
 
 ## Setup and Usage
 
