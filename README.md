@@ -1,4 +1,4 @@
-# Stroke Prediction Analysis based on ML, EDA and statistical analysis.
+# Stroke: Prediction of risk analysis based on machine learning, exploratory data analysis (EDA) and statistical analysis.
 
 ## Overview
 
